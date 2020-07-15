@@ -1,0 +1,766 @@
+---
+title: "US Covid-19"
+author: "Philip Ridgill"
+date: "15/07/2020"
+output: 
+  html_document:
+    df_print: paged
+    code_folding: hide
+    highlight: kate
+    theme: lumen
+    toc: yes
+    toc_float: yes
+---
+
+```{r setup, include=FALSE}
+library(directlabels)
+library(scales)
+library(zoo)
+library(plotly)
+library(spData)
+library(usmap)
+library(tmap)
+library(shinyjs)
+library(purrr)
+library(tidyverse)
+
+
+setwd("C:/Users/phili/OneDrive/Git/US_Covid-19")
+#US_tests <- read.csv("US_tests_06_20.csv")
+US_governors <- read.csv("data/US_governors.csv")
+US_population <- read.csv("data/US_population.csv")
+
+US_tests <- read.csv("https://covidtracking.com/api/v1/states/daily.csv", colClasses=c('integer',  'factor', 'numeric','numeric','numeric','numeric','numeric','numeric','numeric','numeric','numeric','numeric', 'factor','character','character', 'character','numeric', 'numeric','character', 'numeric', 'numeric','numeric', 'numeric','numeric', 'numeric', 'numeric', 'numeric', 'numeric', 'numeric', 'numeric', 'numeric', 'numeric', 'numeric', 'numeric', 'character', 'numeric', 'numeric', 'numeric', 'numeric', 'numeric', 'character'))
+
+date_today <- "14/07/2020"
+
+USt <- US_tests %>%
+  left_join(US_governors, by = c("state")) %>%
+  left_join(US_population, by = c("name")) %>%
+  mutate(date = as.numeric(date),
+         state = as.factor(state)) %>%
+  arrange(date) %>%
+  mutate(date = as.character(date),
+         date = as.Date(date, format("%Y%m%d"))) %>%
+  rename(new_deaths = deathIncrease,
+         new_positive = positiveIncrease,
+         new_negative = negativeIncrease,
+         new_tests = totalTestResultsIncrease,
+         tests = totalTestResults,
+         new_hospitalized = hospitalizedIncrease) %>%
+  mutate(new_pct_positive = new_positive/new_tests,
+         pct_positive = positive/tests,
+         case_fatality = death/positive,
+         case_fatality_hospitalized = death/hospitalized) %>%
+  group_by(state) %>%
+  mutate(new_deaths_7 = rollapply(new_deaths, width=7, FUN=function(x) mean(x, na.rm=TRUE), by=1,  by.column=TRUE, partial=TRUE, fill=NA, align="right"),
+         new_cases_7 = rollapply(new_positive, width=7, FUN=function(x) mean(x, na.rm=TRUE), by=1,  by.column=TRUE, partial=TRUE, fill=NA, align="right"),
+         new_pct_positive_7 = rollapply(new_pct_positive, width=7, FUN=function(x) mean(x, na.rm=TRUE), by=1,  by.column=TRUE, partial=TRUE, fill=NA, align="right"),
+         new_tests_7 = rollapply(new_tests, width=7, FUN=function(x) mean(x, na.rm=TRUE), by=1,  by.column=TRUE, partial=TRUE, fill=NA, align="right"),
+         WoW_new_cases_7 = new_cases_7/lag(new_cases_7,7)-1,
+         WoW_new_deaths_7 = new_deaths_7/lag(new_deaths_7,7)-1,
+         WoW_new_pct_positive_7 = new_pct_positive_7/lag(new_pct_positive_7,7)-1,
+         WoW_new_tests_7 = new_tests_7/lag(new_tests_7,7)-1,
+         new_deaths_7_pop = new_deaths_7/population*100000,
+         new_cases_7_pop = new_cases_7/population*100000,
+         new_tests_7_pop = new_tests_7/population*100000) %>%
+  ungroup() %>%
+  group_by(date) %>%
+  mutate(WoW_new_deaths_median = median(WoW_new_deaths_7, na.rm = TRUE),
+         WoW_new_cases_median = median(WoW_new_cases_7, na.rm = TRUE),
+         count_cases_increasing = sum(WoW_new_cases_7 > 0, na.rm = TRUE),
+         count_cases_decreassing = sum(WoW_new_cases_7 <= 0, na.rm = TRUE),
+         count_deaths_increasing = sum(WoW_new_deaths_7 > 0, na.rm = TRUE),
+         count_deaths_decreassing = sum(WoW_new_deaths_7 <= 0, na.rm = TRUE)) %>%
+  ungroup()
+
+USt_max <- USt %>%
+  group_by(state) %>%
+  mutate(new_cases_7_pop = max(new_cases_7_pop, na.rm = TRUE),
+         new_deaths_7_pop = max(new_deaths_7_pop, na.rm = TRUE)) %>%
+  ungroup()
+
+us_states_map <- us_states 
+
+USt_today <- USt %>%
+  filter(date == as.Date(date_today, format = "%d/%m/%Y")) %>%
+  filter(is.na(new_cases_7_pop) == FALSE) %>%
+  rename(NAME = name) 
+
+us_states_map_today <- us_states_map %>%
+  left_join(USt_today, by = c("NAME"))
+
+USt_map <- USt %>%
+  filter(date > as.Date("12/03/2020", format = "%d/%m/%Y")) %>%
+  filter(is.na(new_cases_7_pop) == FALSE) %>%
+  rename(NAME = name) %>%
+  group_by(NAME) %>%
+  slice(which(row_number() %% 2 == 1)) %>%
+  ungroup()
+  
+
+
+us_states_map <- us_states_map %>%
+  left_join(USt_map, by = c("NAME"))
+
+
+
+## ideas
+#1) number of states with growing/decreasing new cases/deaths by date
+#2) median weekly change - done
+```
+
+Source of the data is The COVID Tracking Project (https://covidtracking.com/). Downloaded with thanks from https://covidtracking.com/api/v1/states/daily.csv
+
+# Cases
+
+### Today
+
+```{r, warning=FALSE, comment=FALSE, message=FALSE}
+breaks_anim_new_cases <- c(0, 1, 2, 3, 4, 5, 7, 10, 15, 20, 30, 40, 50)
+
+US_new_cases <- tm_shape(us_states_map_today, projection = 2163) + 
+  tm_polygons(col = "new_cases_7_pop", breaks = breaks_anim_new_cases, palette = "OrRd", title = "") + 
+  tm_layout(frame = FALSE, title = "New cases per 100 thousand (7 day average)", title.position = c("center", "top")) + 
+  tm_text("state", size = 0.7)
+
+tmap_save(US_new_cases, filename = "images/US_new_cases.jpg", width = 2500, height = 1650)
+
+knitr::include_graphics(path="images/US_new_cases.jpg")
+```
+
+### Day by Day animation
+
+```{r, warning=FALSE, comment=FALSE, message=FALSE}
+breaks_anim_new_cases <- c(0, 1, 2, 3, 4, 5, 7, 10, 15, 20, 30, 40, 50)
+
+urb_anim_cases <- tm_shape(us_states_map, projection = 2163) + 
+  tm_polygons(col = "new_cases_7_pop", breaks = breaks_anim_new_cases, palette = "OrRd", title = "") + 
+  tm_layout(frame = FALSE, title = "New cases per 100 thousand (7 day average)", title.position = c("center", "top")) + 
+  tm_text("state", size = 0.7) +
+  tm_facets(along = "date", free.coords = FALSE, drop.NA.facets = TRUE)
+
+#urb_anim_cases
+
+tmap_animation(urb_anim_cases, filename = "images/US_new_cases.gif", width = 950, height = 700, dpi = 100, delay = 25, loop = TRUE, restart.delay = 200)
+
+
+```
+
+```{r gapgif, fig.show='animate', ffmpeg.format='gif', dev='jpeg'}
+knitr::include_graphics(path="images/US_new_cases.gif")
+```
+
+## Weekly change in new cases
+
+
+### Day by Day animation
+
+```{r, warning=FALSE, comment=FALSE, message=FALSE}
+breaks_WoW <- c(-1, -0.5, -0.25, -0.1, 0, 0.1, 0.25, 0.5, 1, 2, Inf)
+
+urb_anim_WoW_cases <- tm_shape(us_states_map, projection = 2163) + 
+  tm_polygons(col = "WoW_new_cases_7", breaks = breaks_WoW, palette = "-PiYG", title = "") + 
+  tm_layout(frame = FALSE, title = "Weekly change in new cases", title.position = c("center", "top")) + 
+  tm_text("state", size = 0.7) +
+  tm_facets(along = "date", free.coords = FALSE)
+
+#urb_anim_WoW_cases
+
+tmap_animation(urb_anim_WoW_cases, filename = "images/US_WoW_new_cases.gif", width = 950, height = 700, dpi = 100, delay = 25, loop = TRUE, restart.delay = 200)
+
+```
+
+
+```{r gapgif5, fig.show='animate', ffmpeg.format='gif', dev='jpeg'}
+knitr::include_graphics(path="images/US_WoW_new_cases.gif")
+```
+
+### Today
+
+```{r, warning=FALSE, comment=FALSE, message=FALSE}
+breaks_WoW <- c(-1, -0.5, -0.25, -0.1, 0, 0.1, 0.25, 0.5, 1, 2, Inf)
+
+US_WoW_new_cases <- tm_shape(us_states_map_today, projection = 2163) + 
+  tm_polygons(col = "WoW_new_cases_7", breaks = breaks_WoW, palette = "-PiYG", title = "") + 
+  tm_layout(frame = FALSE, title = "Weekly change in new cases", title.position = c("center", "top")) + 
+  tm_text("state", size = 0.7)
+
+tmap_save(US_WoW_new_cases, filename = "images/US_WoW_new_cases.jpg", width = 2700, height = 1900)
+
+knitr::include_graphics(path="images/US_WoW_new_cases.jpg")
+
+```
+
+```{r, warning=FALSE}
+USt %>%
+  filter(positive > 100) %>%
+  filter(is.na(governor) != TRUE) %>%
+  filter(date == as.Date(date_today, format = "%d/%m/%Y")) %>%
+  mutate(name = fct_reorder(name, -new_cases_7)) %>%
+  ggplot(aes(x = name, y = WoW_new_cases_7, fill = governor)) + 
+  geom_col(position = "dodge", col = "black") +
+  scale_y_continuous(expand = c(0,0), labels = percent_format(), breaks = seq(-1,3,0.5), limits = c(-1, 1.5)) +
+  scale_fill_manual(values=c("blue", "red")) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  theme_light() +
+  theme(axis.title.x = element_blank(), panel.grid.minor = element_blank()) +
+  theme(axis.text.x = element_text(angle = 90, size = 8, vjust = 0.5)) +
+  labs(title = "Growth of new cases", subtitle = "ordered by 7 day rolling average of new cases", y = "Week on Week change of average new cases") 
+```
+
+```{r, warning=FALSE}
+USt %>%
+  filter(positive > 100) %>%
+  filter(is.na(governor) != TRUE) %>%
+  filter(date == as.Date(date_today, format = "%d/%m/%Y")) %>%
+  mutate(state = fct_reorder(state, -new_cases_7)) %>%
+  ggplot(aes(x = new_cases_7, y = WoW_new_cases_7, col = governor, label = state)) + 
+  geom_point() +
+  #geom_density2d(alpha = 0.1) +
+  geom_text(aes(label = state), size = 2, hjust= -0.2) +
+  scale_y_continuous(expand = c(0,0), labels = percent_format(), breaks = seq(-1,3,0.5), limits = c(-1, 1.5)) +
+  scale_x_log10(expand = c(0.05,0.05)) +
+  scale_color_manual(values=c("blue", "red")) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  theme_light() +
+  theme(panel.grid.minor = element_blank()) +
+  labs(title = "Growth of new cases", y = "Week on Week change of average new cases", x = "New cases (log - 7 day rolling average)") 
+```
+
+
+```{r, warning=FALSE}
+USt %>%
+  filter(state == "IL" | state == "NY" | state == "CA" | state == "TX" | state == "NJ" | state == "FL" | state == "GA" | state == "MT" | state == "LA" | state == "AZ") %>%
+  ggplot(aes(x = date, y = new_cases_7)) +
+  geom_line(aes(col = state), size = 0.5) +
+  scale_y_log10(breaks = trans_breaks("log10", function(x) 10^x),
+                labels = trans_format("log10", math_format(10^.x))) +
+  geom_dl(aes(label = state), method = list(dl.combine("last.points"), cex = 0.6)) +
+  labs(x = "", y = "New cases (log - 7 day rolling average)", title = "New daily cases") +
+  theme_light() +
+  theme(legend.position = "none",
+        axis.title.x = element_blank())
+```
+
+```{r, warning=FALSE}
+USt %>%
+  gather(key = "key", value = "count", count_cases_increasing, count_cases_decreassing) %>%
+  filter(date > as.Date("15/03/2020", format = "%d/%m/%Y")) %>%
+  ggplot(aes(x = date, y = count, fill = key)) + 
+  geom_col(position = "fill") +
+  scale_fill_manual(values = c("darkgreen", "red")) +
+  scale_y_continuous(expand = c(0,0), labels = percent_format()) +
+  theme_light() +
+  theme(axis.title.x = element_blank(), panel.grid.minor = element_blank()) +
+  labs(title = "Share of states with increasing or decreasing number of new cases", y = "Share of states") 
+```
+
+```{r, warning=FALSE}
+USt_max %>%
+  filter(date == as.Date(date_today, format = "%d/%m/%Y")) %>%
+  mutate(state = fct_reorder(state, -new_cases_7_pop)) %>%
+  filter(new_cases_7_pop > 0.001) %>%
+  ggplot(aes(x = state, y = new_cases_7_pop)) + 
+  geom_col(col = "black", fill = "grey", size = 0.8, alpha = 0.7) +
+  geom_col(data = USt %>% filter(date == as.Date(date_today, format = "%d/%m/%Y")) %>%
+             filter(new_cases_7_pop > 0.001), fill = "red", col = "black", size = 0.5, alpha = 0.7) +
+  theme_light() +
+  theme(axis.title.x = element_blank(), panel.grid.minor = element_blank()) +
+  theme(axis.text.x = element_text(angle = 90, size = 8, vjust = 0.5)) +
+  labs(title = "Current new cases (red) vs all time high (grey)", subtitle = "7 day rolling average of new cases ordered by ATH", y = "New cases per 100,000") 
+```
+
+```{r, warning=FALSE}
+USt %>%
+  filter(date == as.Date(date_today, format = "%d/%m/%Y")) %>%
+  mutate(state = fct_reorder(state, -new_cases_7_pop)) %>%
+  filter(new_cases_7_pop > 0.001) %>%
+  ggplot(aes(x = state, y = new_cases_7_pop)) + 
+  geom_col(col = "black", fill = "red", size = 0.8, alpha = 0.9) +
+  geom_col(data = USt_max %>% filter(date == as.Date(date_today, format = "%d/%m/%Y")) %>%
+             filter(new_cases_7_pop > 0.001), fill = "grey", col = "black", size = 0.8, alpha = 0.3) +
+  theme_light() +
+  theme(axis.title.x = element_blank(), panel.grid.minor = element_blank()) +
+  theme(axis.text.x = element_text(angle = 90, size = 8, vjust = 0.5)) +
+  labs(title = "Current new cases (red) vs all time high (grey)", subtitle = "7 day rolling average of new cases ordered by current data", y = "New cases per 100,000") 
+```
+
+# Deaths
+
+### Today
+
+```{r, warning=FALSE, comment=FALSE, message=FALSE}
+breaks_anim_new_deaths <- c(0, 0.15, 0.3, 0.5, 1, 1.5, 2, 2.5, 3, 4)
+
+US_new_deaths <- tm_shape(us_states_map_today, projection = 2163) + 
+  tm_polygons(col = "new_deaths_7_pop", breaks = breaks_anim_new_deaths, palette = "OrRd", title = "") + 
+  tm_layout(frame = FALSE, title = "New deaths per 100 thousand (7 day average)", title.position = c("center", "top")) + 
+  tm_text("state", size = 0.7)
+
+tmap_save(US_new_deaths, filename = "images/US_new_deaths.jpg", width = 2500, height = 1650)
+
+knitr::include_graphics(path="images/US_new_deaths.jpg")
+```
+
+### Day by Day animation
+
+```{r, warning=FALSE, comment=FALSE, message=FALSE}
+breaks_anim_new_deaths <- c(0, 0.15, 0.3, 0.5, 1, 1.5, 2, 2.5, 3, 4)
+
+urb_anim_deaths <- tm_shape(us_states_map, projection = 2163) + 
+  tm_polygons(col = "new_deaths_7_pop", breaks = breaks_anim_new_deaths, palette = "OrRd", title = "") + 
+  tm_layout(frame = FALSE, title = "New deaths per 100 thousand (7 day average)", title.position = c("center", "top")) + 
+  tm_text("state", size = 0.7) +
+  tm_facets(along = "date", free.coords = FALSE)
+
+#urb_anim_deaths
+
+tmap_animation(urb_anim_deaths, filename = "images/US_new_deaths.gif", width = 950, height = 700, dpi = 100, delay = 25, loop = TRUE, restart.delay = 200)
+```
+
+```{r gapgif2, fig.show='animate', ffmpeg.format='gif', dev='jpeg'}
+knitr::include_graphics(path="images/US_new_deaths.gif")
+```
+
+## Weekly change in new deaths
+
+### Day by Day animation
+
+```{r, warning=FALSE, comment=FALSE, message=FALSE}
+breaks_WoW <- c(-1, -0.5, -0.25, -0.1, 0, 0.1, 0.25, 0.5, 1, 2, Inf)
+
+urb_anim_WoW_deaths <- tm_shape(us_states_map, projection = 2163) + 
+  tm_polygons(col = "WoW_new_deaths_7", breaks = breaks_WoW, palette = "-PiYG", title = "") + 
+  tm_layout(frame = FALSE, title = "Weekly change in new deaths", title.position = c("center", "top")) + 
+  tm_text("state", size = 0.7) +
+  tm_facets(along = "date", free.coords = FALSE)
+
+#urb_anim_WoW_deaths
+
+tmap_animation(urb_anim_WoW_deaths, filename = "images/US_WoW_new_deaths.gif", width = 950, height = 700, dpi = 100, delay = 25, loop = TRUE, restart.delay = 200)
+
+
+```
+
+
+```{r gapgif6, fig.show='animate', ffmpeg.format='gif', dev='jpeg'}
+knitr::include_graphics(path="images/US_WoW_new_deaths.gif")
+```
+
+### Today
+
+```{r, warning=FALSE, comment=FALSE, message=FALSE}
+breaks_WoW <- c(-1, -0.5, -0.25, -0.1, 0, 0.1, 0.25, 0.5, 1, 2, Inf)
+
+US_WoW_new_deaths <- tm_shape(us_states_map_today, projection = 2163) + 
+  tm_polygons(col = "WoW_new_deaths_7", breaks = breaks_WoW, palette = "-PiYG", title = "") + 
+  tm_layout(frame = FALSE, title = "Weekly change in new deaths", title.position = c("center", "top")) + 
+  tm_text("state", size = 0.7)
+
+tmap_save(US_WoW_new_deaths, filename = "images/US_WoW_new_deaths.jpg", width = 2700, height = 1900)
+
+knitr::include_graphics(path="images/US_WoW_new_deaths.jpg")
+```
+
+```{r, warning=FALSE}
+USt %>%
+  filter(positive > 1000) %>%
+  filter(is.na(governor) != TRUE) %>%
+  filter(date == as.Date(date_today, format = "%d/%m/%Y")) %>%
+  mutate(name = fct_reorder(name, -new_deaths_7)) %>%
+  ggplot(aes(x = name, y = WoW_new_deaths_7, fill = governor)) + 
+  geom_col(position = "dodge", col = "black") +
+  scale_y_continuous(expand = c(0,0), labels = percent_format(), breaks = seq(-1,3,0.5), limits = c(-1, 1.5)) +
+  scale_fill_manual(values=c("blue", "red")) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  theme_light() +
+  theme(axis.title.x = element_blank(), panel.grid.minor = element_blank()) +
+  theme(axis.text.x = element_text(angle = 90, size = 8, vjust = 0.5)) +
+  labs(title = "Growth in daily deaths", subtitle = "ordered by 7 day rolling average of daily deaths", y = "Week on Week change of average daily deaths") 
+```
+
+```{r, warning=FALSE}
+USt %>%
+  filter(positive > 1000) %>%
+  filter(is.na(governor) != TRUE) %>%
+  filter(date == as.Date(date_today, format = "%d/%m/%Y")) %>%
+  mutate(state = fct_reorder(state, -new_deaths_7)) %>%
+  ggplot(aes(x = new_deaths_7, y = WoW_new_deaths_7, col = governor, label = state)) + 
+  geom_point() +
+  #geom_density2d(alpha = 0.1) +
+  geom_text(aes(label = state), size = 2, hjust= -0.2) +
+  scale_y_continuous(expand = c(0,0), labels = percent_format(), breaks = seq(-1,3,0.5), limits = c(-1, 1.5)) +
+  scale_x_log10(expand = c(0.05,0.05)) +
+  scale_color_manual(values=c("blue", "red")) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  theme_light() +
+  theme(panel.grid.minor = element_blank()) +
+  labs(title = "Growth in daily deaths", y = "Week on Week change of average daily deaths", x = "Daily deaths (log - 7 day rolling average)") 
+```
+
+```{r, warning=FALSE}
+USt %>%
+  filter(state == "IL" | state == "NY" | state == "CA" | state == "TX" | state == "NJ" | state == "FL" | state == "GA" | state == "MT" | state == "LA") %>%
+  filter(death > 10) %>%
+  ggplot(aes(x = date, y = new_deaths_7)) +
+  geom_line(aes(col = state), size = 0.5) +
+  scale_y_log10(breaks = trans_breaks("log10", function(x) 10^x),
+                labels = trans_format("log10", math_format(10^.x))) +
+  geom_dl(aes(label = state), method = list(dl.combine("last.points"), cex = 0.6)) +
+  labs(x = "", y = "Daily deaths (log - 7 day rolling average)", title = "Daily deaths") +
+  theme_light() +
+  theme(legend.position = "none",
+        axis.title.x = element_blank())
+```
+
+```{r, warning=FALSE}
+USt %>%
+  gather(key = "key", value = "count", count_deaths_increasing, count_deaths_decreassing) %>%
+  filter(date > as.Date("15/03/2020", format = "%d/%m/%Y")) %>%
+  ggplot(aes(x = date, y = count, fill = key)) + 
+  geom_col(position = "fill") +
+  scale_fill_manual(values = c("darkgreen", "red")) +
+  scale_y_continuous(expand = c(0,0), labels = percent_format()) +
+  theme_light() +
+  theme(axis.title.x = element_blank(), panel.grid.minor = element_blank()) +
+  labs(title = "Share of states with increasing or decreasing number of new deaths", y = "Share of states") 
+```
+
+```{r, warning=FALSE}
+USt_max %>%
+  filter(date == as.Date(date_today, format = "%d/%m/%Y")) %>%
+  mutate(state = fct_reorder(state, -new_deaths_7_pop)) %>%
+  filter(new_cases_7_pop > 0.001) %>%
+  ggplot(aes(x = state, y = new_deaths_7_pop)) + 
+  geom_col(col = "black", fill = "grey", size = 0.8, alpha = 0.7) +
+  geom_col(data = USt %>% filter(date == as.Date(date_today, format = "%d/%m/%Y")) %>%
+             filter(new_deaths_7_pop > 0.001), fill = "red", col = "black", size = 0.5, alpha = 0.7) +
+  theme_light() +
+  theme(axis.title.x = element_blank(), panel.grid.minor = element_blank()) +
+  theme(axis.text.x = element_text(angle = 90, size = 8, vjust = 0.5)) +
+  labs(title = "Current new deaths (red) vs all time high (grey)", subtitle = "7 day rolling average of new deaths ordered by ATH", y = "New deaths per 100,000") 
+```
+
+```{r, warning=FALSE}
+USt %>%
+  filter(date == as.Date(date_today, format = "%d/%m/%Y")) %>%
+  mutate(state = fct_reorder(state, -new_deaths_7_pop)) %>%
+  filter(new_cases_7_pop > 0.001) %>%
+  ggplot(aes(x = state, y = new_deaths_7_pop)) + 
+  geom_col(col = "black", fill = "red", size = 0.8, alpha = 0.9) +
+  geom_col(data = USt_max %>% filter(date == as.Date(date_today, format = "%d/%m/%Y")) %>%
+             filter(new_deaths_7_pop > 0.001), fill = "grey", col = "black", size = 0.8, alpha = 0.3) +
+  theme_light() +
+  theme(axis.title.x = element_blank(), panel.grid.minor = element_blank()) +
+  theme(axis.text.x = element_text(angle = 90, size = 8, vjust = 0.5)) +
+  labs(title = "Current new deaths (red) vs all time high (grey)", subtitle = "7 day rolling average of new deaths ordered by current data", y = "New deaths per 100,000") 
+```
+
+
+
+#### Median change
+
+```{r, warning=FALSE}
+USt %>%
+  gather(key = "key", value = "median", WoW_new_cases_median, WoW_new_deaths_median) %>%
+  filter(date > as.Date("01/04/2020", format = "%d/%m/%Y")) %>%
+  ggplot(aes(x = date, y = median, col = key)) + 
+  geom_line(size = 1) +
+  scale_y_continuous(labels = percent_format()) +
+  scale_color_manual(values = c("red", "black")) +
+  geom_hline(yintercept = 0, linetype = "dashed", colour = "blue") +
+  theme_light() +
+  theme(axis.title.x = element_blank(), panel.grid.minor = element_blank()) +
+  labs(title = "Median weekly change by state", y = "Week on Week change") 
+```
+
+# Percentage of positive tests
+
+Data for testing is not always reliable for all states (some states not displayed).
+
+```{r, warning=FALSE}
+USt %>%
+  filter(positive > 1000) %>%
+  filter(new_pct_positive < 0.75) %>%
+  filter(WoW_new_pct_positive_7 < 4) %>%
+  filter(is.na(governor) != TRUE) %>%
+  filter(date == as.Date(date_today, format = "%d/%m/%Y")) %>%
+  mutate(name = fct_reorder(name, -new_pct_positive_7)) %>%
+  ggplot(aes(x = name, y = WoW_new_pct_positive_7, fill = governor)) + 
+  geom_col(position = "dodge", col = "black") +
+  scale_y_continuous(expand = c(0,0), labels = percent_format(), breaks = seq(-1,5,0.5), limits = c(-1, 2)) +
+  scale_fill_manual(values=c("blue", "red")) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  theme_light() +
+  theme(axis.title.x = element_blank(), panel.grid.minor = element_blank()) +
+  theme(axis.text.x = element_text(angle = 90, size = 8, vjust = 0.5)) +
+  labs(title = "Growth in daily % of positive tests", subtitle = "ordered by 7 day rolling average of daily % of positive tests (highest to lowest)", y = "Week on Week change of daily % of positive tests") 
+```
+
+```{r, warning=FALSE}
+USt %>%
+  filter(date == as.Date(date_today, format = "%d/%m/%Y")) %>%
+  filter(positive > 1000) %>%
+  filter(new_pct_positive < 0.75) %>%
+  filter(is.na(governor) != TRUE) %>%
+  mutate(state = fct_reorder(state, -new_pct_positive_7)) %>%
+  ggplot(aes(x = new_pct_positive_7, y = WoW_new_pct_positive_7, col = governor, label = state)) + 
+  geom_point() +
+  #geom_density2d(alpha = 0.1) +
+  geom_text(aes(label = state), size = 2, hjust= -0.2) +
+  scale_y_continuous(expand = c(0,0), labels = percent_format(), breaks = seq(-1,3,0.5), limits = c(-1, 2)) +
+  scale_x_continuous(labels = percent_format()) +
+  scale_color_manual(values=c("blue", "red")) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  theme_light() +
+  theme(panel.grid.minor = element_blank()) +
+  labs(title = "Growth in daily % of positive tests", y = "Week on Week change of % of positive tests", x = "daily % of positive tests (7 day rolling average)") 
+```
+
+```{r, warning=FALSE}
+USt %>%
+  filter(positive > 1000) %>%
+  filter(new_pct_positive < 0.75) %>%
+  filter(is.na(governor) != TRUE) %>%
+  filter(date == as.Date(date_today, format = "%d/%m/%Y")) %>%
+  ggplot(aes(x = WoW_new_tests_7, y = WoW_new_pct_positive_7, col = governor, label = state)) + 
+  geom_point() +
+  #geom_density2d(alpha = 0.1) +
+  geom_text(aes(label = state), size = 2, hjust= -0.2) +
+  scale_y_continuous(expand = c(0,0), labels = percent_format(), breaks = seq(-1,3,0.5), limits = c(-1, 2)) +
+  scale_x_continuous(expand = c(0,0), labels = percent_format(), breaks = seq(-1,5,0.5), limits = c(-1, 2)) +
+  scale_color_manual(values=c("blue", "red")) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  theme_light() +
+  theme(panel.grid.minor = element_blank()) +
+  labs(title = "Change in daily % of positive tests vs change in number of tests", y = "Week on Week change in % of positive tests", x = "Week on Week change in number of tests") 
+```
+
+# Number of daily tests
+
+```{r, warning=FALSE}
+USt %>%
+  filter(positive > 1000) %>%
+  filter(is.na(governor) != TRUE) %>%
+  filter(date == as.Date(date_today, format = "%d/%m/%Y")) %>%
+  mutate(name = fct_reorder(name, -new_tests_7)) %>%
+  ggplot(aes(x = name, y = WoW_new_tests_7, fill = governor)) + 
+  geom_col(position = "dodge", col = "black") +
+  scale_y_continuous(expand = c(0,0), labels = percent_format(), breaks = seq(-1,5,0.5), limits = c(-1, 2)) +
+  scale_fill_manual(values=c("blue", "red")) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  theme_light() +
+  theme(axis.title.x = element_blank(), panel.grid.minor = element_blank()) +
+  theme(axis.text.x = element_text(angle = 90, size = 8, vjust = 0.5)) +
+  labs(title = "Growth in daily number of tests", subtitle = "ordered by 7 day rolling average of daily number of tests (highest to lowest)", y = "Week on Week change in daily number of tests") 
+```
+
+```{r, warning=FALSE}
+USt %>%
+  filter(positive > 1000) %>%
+  filter(is.na(governor) != TRUE) %>%
+  filter(date == as.Date(date_today, format = "%d/%m/%Y")) %>%
+  mutate(state = fct_reorder(state, -new_tests_7)) %>%
+  ggplot(aes(x = new_tests_7, y = WoW_new_tests_7, col = governor, label = state)) + 
+  geom_point() +
+  #geom_density2d(alpha = 0.1) +
+  geom_text(aes(label = state), size = 2, hjust= -0.2) +
+  scale_y_continuous(expand = c(0,0), labels = percent_format(), breaks = seq(-1,3,0.5), limits = c(-1, 2)) +
+  scale_x_log10(expand = c(0.05,0.05)) +
+  scale_color_manual(values=c("blue", "red")) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  theme_light() +
+  theme(panel.grid.minor = element_blank()) +
+  labs(title = "Growth in daily number of tests", y = "Week on Week change in daily number of tests", x = "daily number of tests (log - 7 day rolling average)") 
+```
+
+# Case fatality ratio
+
+```{r, warning=FALSE}
+
+USt %>%
+   filter(state == "IL" | state == "NY" | state == "CA" | state == "TX" | state == "NJ" | state == "FL" | state == "GA" | state == "MT" | state == "LA" | state == "AZ") %>%
+  filter(death > 25) %>%
+  ggplot(aes(x = date, y = case_fatality)) +
+  geom_line(aes(col = state), size = 0.5) +
+  scale_y_continuous(labels = percent_format()) +
+  geom_dl(aes(label = state), method = list(dl.combine("last.points"), cex = 0.6)) +
+  labs(x = "", y = "Case fatality rate", title = "Case fatality", subtitle = "more than 25 deaths") +
+  theme_light() +
+  theme(legend.position = "none",
+        axis.title.x = element_blank())
+
+```
+
+```{r, warning=FALSE}
+USt %>% 
+  filter(death > 25) %>%
+  filter(is.na(governor) != TRUE) %>%
+  filter(date == as.Date(date_today, format = "%d/%m/%Y")) %>%
+  mutate(state = fct_reorder(state, -case_fatality)) %>%
+ggplot(aes(x = state, y = case_fatality, fill = governor)) + 
+  geom_col() +
+  scale_y_continuous(expand = c(0, 0), labels = percent_format()) +
+  scale_fill_manual(values=c("blue", "red")) +
+  theme_light() +
+  theme(axis.title.x = element_blank()) +
+  theme(axis.text.x = element_text(angle = 90, size = 8, vjust = 0.5),
+        legend.position = "none") +
+  labs(title = "Case fatality (cumulative)", y = "Case fatality rate", subtitle = "more than 25 deaths") 
+
+```
+
+# Percentage of positive tests
+
+## Daily
+
+```{r, warning=FALSE}
+USt %>% 
+  filter(date == as.Date(date_today, format = "%d/%m/%Y")) %>%
+  filter(new_pct_positive_7 < 0.75) %>%
+  filter(is.na(governor) != TRUE) %>%
+  mutate(state = fct_reorder(state, -new_pct_positive_7)) %>%
+ggplot(aes(x = state, y = new_pct_positive_7, fill = governor)) + 
+  geom_col() +
+  geom_point(aes(y = pct_positive, x = state), col = "purple") +
+  scale_y_continuous(expand = c(0, 0), labels = percent_format()) +
+  scale_fill_manual(values=c("blue", "red")) +
+  theme_light() +
+  theme(axis.title.x = element_blank()) +
+  theme(axis.text.x = element_text(angle = 90, size = 8, vjust = 0.5),
+        legend.position = "none") +
+  labs(title = "Percentage of positive tests (7 day average)", y = "Positive tests as % of total tests",
+       subtitle = "purple dots represent cumulative") 
+
+```
+
+```{r, warning=FALSE}
+
+USt %>%
+  filter(positive > 500) %>%
+  filter(state == "IL" | state == "NY" | state == "CA" | state == "TX" | state == "NJ" | state == "FL" | state == "GA" | state == "MT" | state == "LA" | state == "AZ") %>%
+  filter(pct_positive < 0.75) %>%
+  ggplot(aes(x = date, y =  new_pct_positive_7)) +
+  geom_line(aes(col = state), size = 0.5) +
+  scale_y_continuous(labels = percent_format()) +
+  geom_dl(aes(label = state), method = list(dl.combine("last.points"), cex = 0.6)) +
+  labs(x = "", y = "Percentage of positive tests", title = "Percentage of positive tests (last 7 days)") +
+  theme_light() +
+  theme(legend.position = "none",
+        axis.title.x = element_blank())
+
+```
+
+## Cumulative
+
+```{r, warning=FALSE}
+USt %>% 
+  filter(date == as.Date(date_today, format = "%d/%m/%Y")) %>%
+  filter(pct_positive < 0.75) %>%
+  filter(is.na(governor) != TRUE) %>%
+  mutate(state = fct_reorder(state, -pct_positive)) %>%
+ggplot(aes(x = state, y = pct_positive, fill = governor)) + 
+  geom_col() +
+  scale_y_continuous(expand = c(0, 0), labels = percent_format()) +
+  scale_fill_manual(values=c("blue", "red")) +
+  theme_light() +
+  theme(axis.title.x = element_blank()) +
+  theme(axis.text.x = element_text(angle = 90, size = 8, vjust = 0.5),
+        legend.position = "none") +
+  labs(title = "Percentage of positive tests (cumulative)", y = "Positive tests as % of total tests") 
+
+```
+
+```{r, warning=FALSE}
+
+USt %>%
+  filter(positive > 500) %>%
+  filter(state == "IL" | state == "NY" | state == "CA" | state == "TX" | state == "NJ" | state == "FL" | state == "GA" | state == "MT" | state == "LA" | state == "AZ") %>%
+  filter(pct_positive < 0.75) %>%
+  ggplot(aes(x = date, y =  pct_positive)) +
+  geom_line(aes(col = state), size = 0.5) +
+  scale_y_continuous(labels = percent_format()) +
+  geom_dl(aes(label = state), method = list(dl.combine("last.points"), cex = 0.6)) +
+  labs(x = "", y = "Percentage of positive tests", title = "Percentage of positive tests (cumulative)") +
+  theme_light() +
+  theme(legend.position = "none",
+        axis.title.x = element_blank())
+
+```
+
+```{r, warning=FALSE}
+USt %>% 
+  filter(date == as.Date(date_today, format = "%d/%m/%Y")) %>%
+  filter(is.na(governor) != TRUE) %>%
+  filter(new_pct_positive < 0.75) %>%
+ggplot(aes(x = pct_positive, y = (new_pct_positive-pct_positive)*100, colour = governor)) + 
+  geom_point() +
+  scale_x_continuous(labels = percent_format()) +
+  scale_y_continuous(limits = c(-20,20)) +
+  scale_colour_manual(values=c("blue", "red")) +
+  geom_smooth(method = "lm", se = FALSE, linetype = "dashed") +
+  geom_text(aes(label = state), size = 2, hjust= -0.4) +
+  theme_light() +
+  theme(legend.position = "none") +
+  labs(title = "Percentage of cumulative positive tests (x) vs pp increase (y)", x = "Positive tests as % of total tests",
+       y = "New pct positve - cumulative pct positive (pp)") 
+
+```
+
+States with high percentage of positive tests have lack of testing. As a result would expect the case fatality rate (deaths/positive cases) to be higher as only most at risk patients are tested. 
+
+```{r, warning=FALSE}
+USt %>% 
+  filter(date == as.Date(date_today, format = "%d/%m/%Y")) %>%
+  filter(is.na(governor) != TRUE) %>%
+  filter(pct_positive < 0.75) %>%
+ggplot(aes(x = pct_positive, y = case_fatality, colour = governor)) + 
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE, linetype = "dashed") +
+  scale_x_continuous(labels = percent_format()) +
+  scale_y_continuous(labels = percent_format()) +
+  scale_colour_manual(values=c("blue", "red")) +
+  geom_text(aes(label = state), size = 2, hjust= -0.4) +
+  theme_light() +
+  theme(legend.position = "none") +
+  labs(title = "Percentage of cumulative positive tests (x) vs case fatality rate (y)", x = "Positive tests as % of total tests", y = "Case fatality rate") 
+
+
+```
+
+## Hospitalizations
+
+```{r, warning=FALSE}
+USt %>% 
+  filter(date == as.Date(date_today, format = "%d/%m/%Y")) %>%
+ggplot(aes(x = hospitalized, y = death)) + 
+  geom_point(aes(colour = governor)) +
+  geom_smooth(method = "lm", se = FALSE, linetype = "dashed") +
+  scale_colour_manual(values=c("blue", "red")) +
+  scale_x_log10() +
+  scale_y_log10() +
+  geom_text(aes(label = state), size = 2, hjust= -0.4) +
+  theme_light() +
+  theme(legend.position = "none") +
+  labs(title = "Hospitalized (x) vs deaths (y)", x = "Hospitalized", y = "Deaths") 
+
+
+```
+
+```{r, warning=FALSE}
+USt %>% 
+  filter(date == as.Date(date_today, format = "%d/%m/%Y")) %>%
+ggplot(aes(y = case_fatality_hospitalized, x = death, colour = governor)) + 
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE, linetype = "dashed") +
+  scale_y_continuous(labels = percent_format()) +
+  scale_colour_manual(values=c("blue", "red")) +
+  scale_x_log10() +
+  geom_text(aes(label = state), size = 2, hjust= -0.4) +
+  theme_light() +
+  theme(legend.position = "none") +
+  labs(title = "Deaths (x) vs Ratio of deaths to hospitalized (y)", y = "Ratio of deaths to hospitalized", x = "Deaths") 
+
+```
