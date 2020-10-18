@@ -1,7 +1,7 @@
 ---
 title: "US Covid-19"
 author: "Philip Ridgill"
-date: "15/07/2020"
+date: "18/10/2020"
 output: 
   html_document:
     df_print: paged
@@ -30,9 +30,9 @@ setwd("C:/Users/phili/OneDrive/Git/US_Covid-19")
 US_governors <- read.csv("data/US_governors.csv")
 US_population <- read.csv("data/US_population.csv")
 
-US_tests <- read.csv("https://covidtracking.com/api/v1/states/daily.csv", colClasses=c('integer',  'factor', 'numeric','numeric','numeric','numeric','numeric','numeric','numeric','numeric','numeric','numeric', 'factor','character','character', 'character','numeric', 'numeric','character', 'numeric', 'numeric','numeric', 'numeric','numeric', 'numeric', 'numeric', 'numeric', 'numeric', 'numeric', 'numeric', 'numeric', 'numeric', 'numeric', 'numeric', 'character', 'numeric', 'numeric', 'numeric', 'numeric', 'numeric', 'character'))
+US_tests <- read.csv("https://covidtracking.com/api/v1/states/daily.csv", colClasses=c('integer', 'factor', 'numeric','numeric','numeric', 'numeric', 'character', 'numeric', 'numeric', 'numeric', 'numeric', 'numeric', 'numeric', 'numeric', 'numeric', 'factor','character','character', 'character','numeric', 'numeric','character', 'numeric', 'numeric','numeric', 'numeric','numeric', 'numeric', 'numeric', 'numeric', 'numeric', 'numeric', 'numeric', 'numeric', 'numeric', 'numeric','numeric', 'numeric','numeric', 'numeric', 'numeric', 'numeric', 'numeric', 'numeric', 'numeric', 'numeric', 'numeric', 'numeric', 'character', 'numeric', 'numeric', 'numeric', 'numeric', 'numeric', 'character'))
 
-date_today <- "14/07/2020"
+date_today <- "17/10/2020"
 
 USt <- US_tests %>%
   left_join(US_governors, by = c("state")) %>%
@@ -95,7 +95,7 @@ USt_map <- USt %>%
   filter(is.na(new_cases_7_pop) == FALSE) %>%
   rename(NAME = name) %>%
   group_by(NAME) %>%
-  slice(which(row_number() %% 2 == 1)) %>%
+  slice(which(row_number() %% 3 == 1)) %>%
   ungroup()
   
 
@@ -117,7 +117,7 @@ Source of the data is The COVID Tracking Project (https://covidtracking.com/). D
 ### Today
 
 ```{r, warning=FALSE, comment=FALSE, message=FALSE}
-breaks_anim_new_cases <- c(0, 1, 2, 3, 4, 5, 7, 10, 15, 20, 30, 40, 50)
+breaks_anim_new_cases <- c(0, 1, 2, 3, 5, 7, 10, 15, 20, 30, 40, 50, 75, 100)
 
 US_new_cases <- tm_shape(us_states_map_today, projection = 2163) + 
   tm_polygons(col = "new_cases_7_pop", breaks = breaks_anim_new_cases, palette = "OrRd", title = "") + 
@@ -132,7 +132,7 @@ knitr::include_graphics(path="images/US_new_cases.jpg")
 ### Day by Day animation
 
 ```{r, warning=FALSE, comment=FALSE, message=FALSE}
-breaks_anim_new_cases <- c(0, 1, 2, 3, 4, 5, 7, 10, 15, 20, 30, 40, 50)
+breaks_anim_new_cases <- c(0, 1, 2, 3, 4, 5, 7, 10, 15, 20, 30, 40, 50, 75, 100)
 
 urb_anim_cases <- tm_shape(us_states_map, projection = 2163) + 
   tm_polygons(col = "new_cases_7_pop", breaks = breaks_anim_new_cases, palette = "OrRd", title = "") + 
@@ -230,17 +230,19 @@ USt %>%
 
 
 ```{r, warning=FALSE}
-USt %>%
-  filter(state == "IL" | state == "NY" | state == "CA" | state == "TX" | state == "NJ" | state == "FL" | state == "GA" | state == "MT" | state == "LA" | state == "AZ") %>%
-  ggplot(aes(x = date, y = new_cases_7)) +
+ggplotly(
+  USt %>%
+  filter(state == "IL" | state == "NY" | state == "CA" | state == "TX" | state == "NJ" | state == "FL" | state == "GA" | state == "MT" | state == "LA" | state == "AZ" | state == "ND") %>%
+  ggplot(aes(x = date, y = round(new_cases_7_pop,2))) +
   geom_line(aes(col = state), size = 0.5) +
-  scale_y_log10(breaks = trans_breaks("log10", function(x) 10^x),
-                labels = trans_format("log10", math_format(10^.x))) +
+  # scale_y_log10(breaks = trans_breaks("log10", function(x) 10^x),
+  #               labels = trans_format("log10", math_format(10^.x))) +
   geom_dl(aes(label = state), method = list(dl.combine("last.points"), cex = 0.6)) +
-  labs(x = "", y = "New cases (log - 7 day rolling average)", title = "New daily cases") +
+  labs(x = "", y = "New cases per 100 thousand (7 day rolling average)", title = "New cases per 100 thousand") +
   theme_light() +
   theme(legend.position = "none",
         axis.title.x = element_blank())
+)
 ```
 
 ```{r, warning=FALSE}
@@ -263,6 +265,7 @@ USt_max %>%
   filter(new_cases_7_pop > 0.001) %>%
   ggplot(aes(x = state, y = new_cases_7_pop)) + 
   geom_col(col = "black", fill = "grey", size = 0.8, alpha = 0.7) +
+  scale_y_continuous(limits = c(0,100)) +
   geom_col(data = USt %>% filter(date == as.Date(date_today, format = "%d/%m/%Y")) %>%
              filter(new_cases_7_pop > 0.001), fill = "red", col = "black", size = 0.5, alpha = 0.7) +
   theme_light() +
@@ -278,6 +281,7 @@ USt %>%
   filter(new_cases_7_pop > 0.001) %>%
   ggplot(aes(x = state, y = new_cases_7_pop)) + 
   geom_col(col = "black", fill = "red", size = 0.8, alpha = 0.9) +
+  scale_y_continuous(limits = c(0,100)) +
   geom_col(data = USt_max %>% filter(date == as.Date(date_today, format = "%d/%m/%Y")) %>%
              filter(new_cases_7_pop > 0.001), fill = "grey", col = "black", size = 0.8, alpha = 0.3) +
   theme_light() +
@@ -400,18 +404,19 @@ USt %>%
 ```
 
 ```{r, warning=FALSE}
-USt %>%
-  filter(state == "IL" | state == "NY" | state == "CA" | state == "TX" | state == "NJ" | state == "FL" | state == "GA" | state == "MT" | state == "LA") %>%
-  filter(death > 10) %>%
-  ggplot(aes(x = date, y = new_deaths_7)) +
+ggplotly(
+  USt %>%
+  filter(state == "IL" | state == "NY" | state == "CA" | state == "TX" | state == "NJ" | state == "FL" | state == "GA" | state == "MT" | state == "LA" | state == "AZ" | state == "ND") %>%
+  ggplot(aes(x = date, y = round(new_deaths_7_pop,2))) +
   geom_line(aes(col = state), size = 0.5) +
-  scale_y_log10(breaks = trans_breaks("log10", function(x) 10^x),
-                labels = trans_format("log10", math_format(10^.x))) +
+  # scale_y_log10(breaks = trans_breaks("log10", function(x) 10^x),
+  #               labels = trans_format("log10", math_format(10^.x))) +
   geom_dl(aes(label = state), method = list(dl.combine("last.points"), cex = 0.6)) +
-  labs(x = "", y = "Daily deaths (log - 7 day rolling average)", title = "Daily deaths") +
+  labs(x = "", y = "Daily deaths per 100 thousand (7 day rolling average)", title = "Daily deaths per 100 thousand") +
   theme_light() +
   theme(legend.position = "none",
         axis.title.x = element_blank())
+)
 ```
 
 ```{r, warning=FALSE}
@@ -637,10 +642,10 @@ ggplot(aes(x = state, y = new_pct_positive_7, fill = governor)) +
 ```
 
 ```{r, warning=FALSE}
-
+ggplotly(
 USt %>%
   filter(positive > 500) %>%
-  filter(state == "IL" | state == "NY" | state == "CA" | state == "TX" | state == "NJ" | state == "FL" | state == "GA" | state == "MT" | state == "LA" | state == "AZ") %>%
+  filter(state == "IL" | state == "NY" | state == "CA" | state == "TX" | state == "ND" | state == "FL" | state == "MT" | state == "LA" | state == "AZ") %>%
   filter(pct_positive < 0.75) %>%
   ggplot(aes(x = date, y =  new_pct_positive_7)) +
   geom_line(aes(col = state), size = 0.5) +
@@ -650,7 +655,7 @@ USt %>%
   theme_light() +
   theme(legend.position = "none",
         axis.title.x = element_blank())
-
+)
 ```
 
 ## Cumulative
@@ -663,13 +668,16 @@ USt %>%
   mutate(state = fct_reorder(state, -pct_positive)) %>%
 ggplot(aes(x = state, y = pct_positive, fill = governor)) + 
   geom_col() +
+  # geom_point(aes(y = new_pct_positive_7, x = state), col = "purple") +
   scale_y_continuous(expand = c(0, 0), labels = percent_format()) +
   scale_fill_manual(values=c("blue", "red")) +
   theme_light() +
   theme(axis.title.x = element_blank()) +
   theme(axis.text.x = element_text(angle = 90, size = 8, vjust = 0.5),
         legend.position = "none") +
-  labs(title = "Percentage of positive tests (cumulative)", y = "Positive tests as % of total tests") 
+  labs(title = "Percentage of positive tests (cumulative)", y = "Positive tests as % of total tests"
+       # , subtitle = "purple dots represent last 7 days"
+       ) 
 
 ```
 
@@ -677,7 +685,7 @@ ggplot(aes(x = state, y = pct_positive, fill = governor)) +
 
 USt %>%
   filter(positive > 500) %>%
-  filter(state == "IL" | state == "NY" | state == "CA" | state == "TX" | state == "NJ" | state == "FL" | state == "GA" | state == "MT" | state == "LA" | state == "AZ") %>%
+  filter(state == "IL" | state == "NY" | state == "CA" | state == "TX" | state == "NJ" | state == "FL" | state == "GA" | state == "MT" | state == "LA" | state == "AZ" | state == "SD") %>%
   filter(pct_positive < 0.75) %>%
   ggplot(aes(x = date, y =  pct_positive)) +
   geom_line(aes(col = state), size = 0.5) +
